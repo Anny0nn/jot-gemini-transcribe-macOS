@@ -164,6 +164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "smartTranscription": settings.setSmartTranscription(value)
         case "smartCleanupPass": settings.setSmartCleanupPass(value)
         case "legacyTranscribeEndpoint": settings.setLegacyTranscribeEndpoint(value)
+        case "polishRewrite": settings.setPolishRewrite(value)
+        case "keepHistory": settings.setKeepHistory(value)
         default: Log.session.warning("debug set: unknown key \(key, privacy: .public)")
         }
     }

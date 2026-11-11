@@ -183,6 +183,10 @@ public final class DictationCoordinator: ObservableObject {
     /// Injected so the coordinator never needs to know about sockets or keys,
     /// and so tests can drive every live failure mode with no network.
     private let makeLiveSession: @MainActor () -> LiveTranscribing?
+    /// Whether delivered dictations stay on disk (Settings → Privacy). Read at
+    /// the moment of delivery, so flipping it applies to the next dictation
+    /// that lands, not to one already in flight that started under the old rule.
+    private let keepHistory: @MainActor () -> Bool
 
     public init(
         audioFactory: @escaping @MainActor () -> AudioCapturing,
@@ -192,8 +196,10 @@ public final class DictationCoordinator: ObservableObject {
         now: @escaping () -> Date = Date.init,
         noiseHandlingEnabled: @escaping @MainActor () -> Bool = { SettingsStore().experimentalNoiseHandling },
         secureInputActive: @escaping @MainActor () -> Bool = { SecureInput.isActive },
-        makeLiveSession: @escaping @MainActor () -> LiveTranscribing? = { nil }
+        makeLiveSession: @escaping @MainActor () -> LiveTranscribing? = { nil },
+        keepHistory: @escaping @MainActor () -> Bool = { SettingsStore().keepHistory }
     ) {
+        self.keepHistory = keepHistory
         self.audioFactory = audioFactory
         self.transcription = transcription
         self.insertion = insertion
@@ -655,7 +661,13 @@ public final class DictationCoordinator: ObservableObject {
                         framesWritten: result.framesWritten
                     )
                     guard !Task.isCancelled else { return }
-                    if let liveResult {
+                    if let streamed = liveResult {
+                        // The live stream bypasses the batch service, so the
+                        // polish/tone pass has to be asked for explicitly —
+                        // otherwise turning on live would quietly turn off the
+                        // rewrite. Never throws; a failed pass keeps `streamed`.
+                        let liveResult = await self.transcription.refine(streamed, context: session.context)
+                        guard !Task.isCancelled else { return }
                         // Show the finished text in place of the guess before the
                         // pill moves on. This is the beat the landing page sells:
                         // the sentence visibly becomes the polished one.
@@ -721,6 +733,13 @@ public final class DictationCoordinator: ObservableObject {
             apply(.insertionBlockedSecure)
         }
         lastResult = outcome.cleanedTranscript
+        // History off: the words have reached the cursor or the clipboard, so
+        // the recording and transcript have done their job — delete them now.
+        // A secure-field hold is NOT delivered (the text exists nowhere else),
+        // so it stays until the user takes it from History.
+        if !keepHistory(), insertionOutcome != .blockedSecureField {
+            discardSessionArtifacts()
+        }
         session = nil
     }
 
@@ -829,7 +848,9 @@ public final class DictationCoordinator: ObservableObject {
         // and destroys a recording of ANY length (production pass 2, P0).
         let duration = result?.durationSeconds ?? session?.meta.audioDurationSeconds ?? 0
         let hasTranscript = session?.meta.rawTranscript != nil
-        if hasTranscript || duration >= Self.cancelKeepThreshold {
+        // History off: Esc means "throw this away", whatever its length. The
+        // keep-long-cancels safety net is a History feature and goes with it.
+        if keepHistory(), hasTranscript || duration >= Self.cancelKeepThreshold {
             // Long cancels stay recoverable — History shows them with Retry.
             updateMeta {
                 $0.status = .cancelled

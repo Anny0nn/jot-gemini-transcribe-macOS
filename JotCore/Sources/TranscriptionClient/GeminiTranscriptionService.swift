@@ -17,12 +17,14 @@ import Foundation
 /// The transcription pipeline.
 ///
 ///   CAF → FLAC → interactions (mode: smart, custom_vocabulary)
-///       → [optional] flash-lite cleanup for per-app tone → validation gate
-///       → ReplacementEngine → inserted text.
+///       → flash-lite polish rewrite (default on) and/or per-app tone
+///       → validation gate → ReplacementEngine → inserted text.
 ///
-/// The model now does filler removal, self-correction collapse and list
-/// formatting itself, so the default path is ONE call. The cleanup pass survives
-/// as an opt-in because it is the only thing that carries per-app tone.
+/// The transcribe model ignores prompts, so the audio call is a pure
+/// transcription (smart mode already drops fillers and applies
+/// self-corrections). Anything instruction-driven — the polish rewrite, tone —
+/// is a second, TEXT-ONLY call: the audio is never sent twice, and nothing but
+/// the transcript and the user's Dictionary terms goes with it.
 ///
 /// Rules unchanged: one silent retry on transient transcribe failures; cleanup
 /// has a hard deadline and NEVER blocks a good transcript; every failure is a
@@ -79,7 +81,7 @@ public struct GeminiTranscriptionService: TranscriptionServicing {
             throw TranscriptionError.emptyTranscript
         }
 
-        guard policy.cleanupPass else {
+        guard policy.runsSecondPass else {
             // Dictionary rules are a HARD guarantee — they apply on every path
             // (audit L9). The gate is deliberately NOT run here: with no second
             // model there is no independent reference, and validate(raw:X, cleaned:X)
@@ -93,12 +95,36 @@ public struct GeminiTranscriptionService: TranscriptionServicing {
             )
         }
 
-        let cleaned = await cleanupOrFallback(raw: trimmedRaw, context: context, config: config)
+        let cleaned = await secondPassOrFallback(raw: trimmedRaw, policy: policy, context: context, config: config)
         return TranscriptionResult(
             rawTranscript: trimmedRaw,
             cleanedTranscript: cleaned,
-            modelID: "\(config.transcribeModel)/\(policy.mode.rawValue)+\(config.cleanupModel)"
+            modelID: "\(config.transcribeModel)/\(policy.mode.rawValue)+\(Self.passLabel(policy)):\(config.cleanupModel)"
         )
+    }
+
+    /// The live stream produces its own transcript; this gives it the same
+    /// polish/tone pass the batch path gets, so switching transport does not
+    /// silently switch off the rewrite.
+    public func refine(_ result: TranscriptionResult, context: DictationContext) async -> TranscriptionResult {
+        let policy = settings.formattingPolicy
+        let raw = result.rawTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard policy.runsSecondPass, !raw.isEmpty else { return result }
+        let config = settings.geminiConfig
+        let cleaned = await secondPassOrFallback(raw: raw, policy: policy, context: context, config: config)
+        return TranscriptionResult(
+            rawTranscript: result.rawTranscript,
+            cleanedTranscript: cleaned,
+            modelID: "\(result.modelID)+\(Self.passLabel(policy)):\(config.cleanupModel)"
+        )
+    }
+
+    private static func passLabel(_ policy: SettingsStore.FormattingPolicy) -> String {
+        switch (policy.polish, policy.cleanupPass) {
+        case (true, true): return "polish+tone"
+        case (true, false): return "polish"
+        default: return "tone"
+        }
     }
 
     // MARK: - Stages
@@ -192,26 +218,47 @@ public struct GeminiTranscriptionService: TranscriptionServicing {
         }
     }
 
-    private func cleanupOrFallback(raw: String, context: DictationContext, config: GeminiConfig) async -> String {
-        let tone = PromptV1.toneCategory(forBundleID: context.targetAppBundleID)
+    private func secondPassOrFallback(
+        raw: String, policy: SettingsStore.FormattingPolicy,
+        context: DictationContext, config: GeminiConfig
+    ) async -> String {
+        // Tone is a one-line category derived from the target app's bundle ID —
+        // never the app's name, window title or contents.
+        let tone = policy.cleanupPass
+            ? PromptV1.toneCategory(forBundleID: context.targetAppBundleID)
+            : .neutral
         let dictionary = DictionaryStore()
-        let prompt = PromptV1.cleanupPrompt(
-            raw: raw,
-            tone: tone,
-            vocabulary: dictionary.sanitizedVocabulary(),
-            spellings: dictionary.spellings()
-        )
+        let prompt: String
+        let deadline: TimeInterval
+        if policy.polish {
+            prompt = PolishPrompt.prompt(
+                transcript: raw, tone: tone,
+                vocabulary: dictionary.sanitizedVocabulary(),
+                spellings: dictionary.spellings()
+            )
+            deadline = PolishPrompt.deadline(forTranscript: raw)
+        } else {
+            prompt = PromptV1.cleanupPrompt(
+                raw: raw, tone: tone,
+                vocabulary: dictionary.sanitizedVocabulary(),
+                spellings: dictionary.spellings()
+            )
+            deadline = Self.cleanupDeadline
+        }
         do {
             let response = try await client.cleanup(
                 prompt: prompt, model: config.cleanupModel,
-                endpoint: config.endpoint, deadline: Self.cleanupDeadline
+                endpoint: config.endpoint, deadline: deadline
             )
             let cleaned = ValidationGate.stripArtifacts(response)
             let verdict = ValidationGate.validate(raw: raw, cleaned: cleaned)
             guard verdict.accepted else {
                 let trips = settings.recordGateTrip()
                 Log.transcription.warning("cleanup gate REJECTED (\(verdict.reason ?? "?", privacy: .public), trip #\(trips) in 24h) — inserting raw")
-                autoDegradeIfNeeded(trips: trips)
+                // Auto-degrade belongs to the opt-in tone pass. Polish is the
+                // product here: a gate trip costs that ONE dictation its rewrite
+                // (the smart transcript goes in instead), never the setting.
+                if !policy.polish { autoDegradeIfNeeded(trips: trips) }
                 return ReplacementEngine.apply(dictionary.replacementRules(), to: raw)
             }
             // The dictionary's hard guarantee: explicit wrong→right rules always win.

@@ -15,11 +15,13 @@ Everything else stays on your Mac. The code is open — verify all of this.
    right as you speak rather than being corrected afterwards. Only the correct
    spellings are sent — never the misspellings you record. They ride on every
    dictation, including with Smart transcription off.
-3. **The formatting prompt**, *only if* "Match tone to the app you're in" is on
-   in Settings → Dictation — off by default. It contains the transcript being
-   formatted, the formatting rules, a coarse tone category derived from the
-   frontmost app's *category* (e.g. "chat message"), and your dictionary terms.
-   With that setting off, your transcript text never leaves this Mac at all.
+3. **The formatting prompt** — a second, text-only request — when "Polish into
+   finished writing" (on by default) or "Match tone to the app you're in" (off
+   by default) is on in Settings → Dictation. It contains the transcript being
+   rewritten, the rewriting rules, your dictionary terms, and — only with tone
+   matching on — a coarse tone category derived from the frontmost app's
+   *category* (e.g. "chat message"). The audio is not sent a second time. With
+   both settings off, your transcript text never leaves this Mac at all.
    Never window contents, never screenshots, never surrounding text.
 4. **Your API key**, in the request header to Google only. It is stored in the
    macOS Keychain, never in files or preferences.
@@ -30,7 +32,7 @@ Everything else stays on your Mac. The code is open — verify all of this.
   only as part of the requests above, never in bulk and never anywhere else
 - Your dictionary as a file. Individual terms ride with the audio as described
   above, and your misspelling rules are included in the formatting prompt *only*
-  when tone matching is on — with it off (the default) they never leave. The
+  when polish or tone matching is on — with both off they never leave. The
   store itself, and everything you have not dictated against, stays on this Mac
 - Which apps you use, when you dictate, or anything you type
 - Keystrokes: the event tap watches your dictation key, plus — only while a
@@ -38,15 +40,33 @@ Everything else stays on your Mac. The code is open — verify all of this.
   *fact that* another key was pressed (the accidental-chord guard; which key it
   was is never examined beyond its keycode, never logged, never stored, never
   transmitted). When you're not dictating, other keys pass through untouched.
-- Screenshots: never taken. The app contains no screen-capture code.
+- Screenshots, screen contents, system audio: never captured. The app contains
+  no screen-capture code and records only the microphone.
+- Accessibility: used only to type into the field you are dictating into. Jot
+  reads that one field's role (to refuse password fields) and its value before
+  and after inserting (to confirm the text landed and never double-insert). It
+  does not read other UI, other apps or other windows, and nothing it reads
+  leaves the Mac or is stored. The pill finds your screen from window bounds,
+  never window titles or contents.
 - Telemetry: there is none. No analytics SDK, no crash uploader, no phone-home.
 
 ## What's stored locally, and your controls
 
-- One folder per dictation (`~/Library/Application Support/Jot/recordings/`):
-  crash-safe audio, transcript, metadata — this is what makes Retry and recovery work.
-- Settings → Privacy & Storage: audio retention (24h / 7d / 30d / forever / never —
-  "never" disables Retry), plus one-click **Delete all history**.
+- **By default nothing is kept.** "Keep dictation history" (Settings → Privacy &
+  Storage) is off: a dictation's recording and transcript are deleted the moment
+  the text reaches your cursor or clipboard, and Esc deletes a dictation of any
+  length. While you speak, audio is written to a folder
+  (`~/Library/Application Support/Jot/recordings/`) so a crash or a dropped
+  connection can't lose it; that folder does not outlive the dictation.
+- The exception is words that have not been delivered yet — offline, failed, or
+  held because a password field had focus. Those stay in History so they can be
+  retried, until you retry or delete them.
+- With history on: one folder per dictation (crash-safe audio, transcript,
+  metadata) powers History, Retry and recovery; audio retention (24h / 7d / 30d /
+  forever / never — "never" disables Retry) applies; and **Delete all history**
+  is one click.
+- Turning history off does not delete what is already in History — use Delete
+  all history for that.
 - Local files are protected by FileVault if enabled; they are not separately
   encrypted (stated honestly).
 
@@ -67,5 +87,9 @@ the clipboard.
 
 - Build from source (`./scripts/build.sh`).
 - Watch traffic with Little Snitch or `nettop` — you'll see exactly one host.
-- Read the prompt: it's a source file — note it governs only the optional tone pass; with that off, formatting happens inside Google's transcription model and there is no local prompt to read
-  ([PromptV1.swift](../JotCore/Sources/FormattingPipeline/PromptV1.swift)).
+- Read the prompts: they're source files —
+  [PolishPrompt.swift](../JotCore/Sources/FormattingPipeline/PolishPrompt.swift)
+  (the polish rewrite) and
+  [PromptV1.swift](../JotCore/Sources/FormattingPipeline/PromptV1.swift) (tone
+  matching alone). With both off, formatting happens inside Google's
+  transcription model and there is no local prompt to read.

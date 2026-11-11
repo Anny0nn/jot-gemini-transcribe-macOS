@@ -232,9 +232,35 @@ struct GeneralPane: View {
     @State private var hotkey = SettingsStore().hotkeyKey
     @State private var doubleTapLock = SettingsStore().doubleTapLockEnabled
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var globeAction = FnUsageAdvisor.currentGlobeKeyAction()
+
+    /// Plain-language name for what macOS does on its own when fn/🌐 is pressed.
+    private var globeActionName: String {
+        switch globeAction {
+        case .changeInputSource: return "switches input source"
+        case .showEmoji, .systemDefault: return "opens the emoji picker"
+        case .startDictation: return "starts macOS Dictation"
+        case .doNothing: return "does nothing"
+        case .unknown: return "runs a system action"
+        }
+    }
 
     var body: some View {
         Form {
+            // macOS handles the fn/🌐 press itself, below the level any app can
+            // intercept, so holding fn to dictate would ALSO fire this action.
+            // The only fix is the system setting — say so where the key is chosen.
+            if hotkey == .fn, globeAction.conflictsWithFnHotkey {
+                Section {
+                    Text("macOS also \(globeActionName) when you press fn, which will fight with holding it to dictate. Set Keyboard → “Press 🌐 key to” → “Do Nothing”. If macOS Dictation’s shortcut uses 🌐/fn, change that too.")
+                    Button("Open Keyboard Settings…") {
+                        NSWorkspace.shared.open(FnUsageAdvisor.keyboardSettingsURL)
+                    }
+                } header: {
+                    Text("fn is shared with macOS")
+                }
+            }
+
             Section {
                 Picker("Dictation key", selection: $hotkey) {
                     ForEach(HotkeyKey.allCases, id: \.self) { key in
@@ -282,6 +308,11 @@ struct GeneralPane: View {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             hotkey = settings.hotkeyKey
             doubleTapLock = settings.doubleTapLockEnabled
+            globeAction = FnUsageAdvisor.currentGlobeKeyAction()
+        }
+        // The fix happens in System Settings, so re-check when the user comes back.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            globeAction = FnUsageAdvisor.currentGlobeKeyAction()
         }
         // The other panes guard the same way; these two can move under us from
         // the DEBUG jot://set driver.
@@ -302,6 +333,7 @@ struct DictationPane: View {
     @State private var sounds = SettingsStore().soundsEnabled
     @State private var smartTranscription = SettingsStore().smartTranscriptionEnabled
     @State private var cleanupPass = SettingsStore().smartCleanupPassEnabled
+    @State private var polish = SettingsStore().polishRewriteEnabled
     @State private var showIdleDot = SettingsStore().showIdleIndicator
     @State private var noiseHandling = SettingsStore().experimentalNoiseHandling
     @State private var liveTranscription = SettingsStore().liveTranscription
@@ -323,7 +355,17 @@ struct DictationPane: View {
                         settings.setSmartTranscription(enabled)
                     }
             } footer: {
-                Text("Removes filler words and applies self-corrections (\"at 2 — actually 3\") as it transcribes. Off = word for word — unless tone matching below is on, which rewrites either way.")
+                Text("Removes filler words and applies self-corrections (\"at 2 — actually 3\") as it transcribes. Off = word for word — unless polish or tone matching is on, which rewrite either way.")
+            }
+
+            Section {
+                Toggle("Polish into finished writing", isOn: $polish)
+                    .onChange(of: polish) { _, enabled in
+                        guard enabled != settings.polishRewriteEnabled else { return }
+                        settings.setPolishRewrite(enabled)
+                    }
+            } footer: {
+                Text("Ramble freely: after you let go, the transcript is rewritten into clear, well-organized text — repetitions and false starts gone, sentences and paragraphs reordered for clarity, your meaning and terminology kept. Sends the transcript text (not audio, never anything on screen) to the formatting model once more, and adds a few seconds. If it's slow or fails, the plain transcript goes in instead.")
             }
 
             Section {
@@ -379,6 +421,9 @@ struct DictationPane: View {
             if note.object as? String == "smartCleanupPass" {
                 cleanupPass = settings.smartCleanupPassEnabled
             }
+            if note.object as? String == "polishRewrite" {
+                polish = settings.polishRewriteEnabled
+            }
             // jot://set drives this headlessly in DEBUG — the pane must not show
             // a stale toggle after the flag moved underneath it.
             if note.object as? String == "experimentalNoiseHandling" {
@@ -394,10 +439,29 @@ struct PrivacyPane: View {
     let onDeleteAllHistory: () -> Void
     private let settings = SettingsStore()
     @State private var retentionDays = SettingsStore().audioRetentionDays
+    @State private var keepHistory = SettingsStore().keepHistory
     @State private var confirmingDelete = false
+
+    private var transcriptTextLine: String {
+        settings.polishRewriteEnabled || settings.smartCleanupPassEnabled
+            ? "Sent once more to the formatting model to polish it"
+            : "Never leaves — polish and tone matching are off"
+    }
 
     var body: some View {
         Form {
+            Section {
+                Toggle("Keep dictation history", isOn: $keepHistory)
+                    .onChange(of: keepHistory) { _, enabled in
+                        guard enabled != settings.keepHistory else { return }
+                        settings.setKeepHistory(enabled)
+                    }
+            } footer: {
+                Text(keepHistory
+                     ? "Recordings and transcripts are kept in History, so you can search, copy and retry them."
+                     : "Off: a dictation's recording and text are deleted from this Mac the moment the text reaches your cursor or clipboard. Audio is written to disk only while you speak, so a crash or dropped connection can't lose it. Dictations that haven't been delivered yet (offline, failed, or blocked by a password field) stay in History until you retry or delete them.")
+            }
+
             Section {
                 Picker("Keep audio recordings", selection: $retentionDays) {
                     Text("Never (disables Retry)").tag(-1)
@@ -415,19 +479,20 @@ struct PrivacyPane: View {
                         RetentionPolicy(audioRetentionDays: days).purgeExpiredAudio()
                     }
                 }
+                .disabled(!keepHistory)
             } footer: {
-                Text("Transcripts stay in History until you delete them.")
+                Text("Applies while history is kept. Transcripts stay in History until you delete them.")
             }
 
             Section {
                 LabeledContent("Audio") { Text("Sent to the Gemini API with your key") }
-                LabeledContent("Transcript text") { Text("Only if tone matching is on — otherwise it never leaves") }
+                LabeledContent("Transcript text") { Text(transcriptTextLine) }
                 LabeledContent("Dictionary terms") { Text("Sent with the audio, so names are spelled right as you speak") }
                 LabeledContent("Everything else") { Text("Never leaves this Mac") }
             } header: {
                 Text("What leaves your Mac")
             } footer: {
-                Text("No middleman server, no account, no analytics, no screenshots, no keystroke logging. One network host.")
+                Text("Microphone audio only — no screenshots, no screen contents, no system audio, no keystroke logging. Accessibility is used only to type into the field you're in. No middleman server, no account, no analytics. One network host.")
             }
 
             Section {

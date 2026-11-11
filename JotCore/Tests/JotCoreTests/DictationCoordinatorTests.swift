@@ -50,6 +50,12 @@ final class DictationCoordinatorTests: XCTestCase {
             .success(TranscriptionResult(rawTranscript: "raw", cleanedTranscript: "clean", modelID: "test"))
         /// Simulates a slow round-trip so tests can act mid-flight.
         var delayNanos: UInt64 = 0
+        /// Stands in for the polish pass on the live path; nil = no refinement.
+        var refineTo: String?
+        func refine(_ result: TranscriptionResult, context: DictationContext) async -> TranscriptionResult {
+            guard let refineTo else { return result }
+            return TranscriptionResult(rawTranscript: result.rawTranscript, cleanedTranscript: refineTo, modelID: result.modelID + "+polish")
+        }
         func transcribe(audioURL: URL, durationSeconds: Double, context: DictationContext) async throws -> TranscriptionResult {
             if delayNanos > 0 {
                 try? await Task.sleep(nanoseconds: delayNanos)
@@ -94,7 +100,11 @@ final class DictationCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         transcription: FakeTranscription = FakeTranscription(),
         noiseHandling: Bool = false,
-        secureInput: Bool = false
+        secureInput: Bool = false,
+        // The pre-existing storage tests describe History-on behaviour, so they
+        // keep it explicitly; the History-off rules have their own tests below.
+        keepHistory: Bool = true,
+        live: LiveTranscribing? = nil
     ) -> DictationCoordinator {
         capture = FakeCapture()
         inserter = FakeInserter()
@@ -110,7 +120,9 @@ final class DictationCoordinatorTests: XCTestCase {
             // Never read the host's real secure-input state: it is system-wide,
             // and a stuck loginwindow or Terminal's Secure Keyboard Entry would
             // fail every begin-a-session test for reasons unrelated to the code.
-            secureInputActive: { secureInput }
+            secureInputActive: { secureInput },
+            makeLiveSession: { live },
+            keepHistory: { keepHistory }
         )
         lastCoordinator = coordinator
         return coordinator
@@ -205,6 +217,85 @@ final class DictationCoordinatorTests: XCTestCase {
         c.handle(.finalize) // released almost immediately — first buffer never landed
         await settle()
         XCTAssertEqual(c.state, .done(.silent), "an accidental blip is not a mic failure")
+    }
+
+    // History off (the default): delivered dictations leave nothing on disk.
+
+    func testHistoryOffDiscardsOnceInserted() async {
+        let c = makeCoordinator(keepHistory: false)
+        var discarded: UUID?
+        c.onSessionDiscard = { discarded = $0 }
+        c.handle(.begin)
+        c.handle(.finalize)
+        await settle()
+        XCTAssertEqual(c.state, .done(.inserted))
+        XCTAssertNotNil(discarded, "inserted text needs no recording or transcript left behind")
+        XCTAssertEqual(c.lastResult, "clean", "Paste-last still works from memory")
+    }
+
+    func testHistoryOffDiscardsOnceOnClipboard() async {
+        let c = makeCoordinator(keepHistory: false)
+        inserter.outcome = .fellBackToClipboard
+        var discarded: UUID?
+        c.onSessionDiscard = { discarded = $0 }
+        c.handle(.begin)
+        c.handle(.finalize)
+        await settle()
+        XCTAssertNotNil(discarded)
+    }
+
+    func testHistoryOffKeepsUndeliveredSecureFieldHold() async {
+        let c = makeCoordinator(keepHistory: false)
+        inserter.outcome = .blockedSecureField
+        var discarded: UUID?
+        c.onSessionDiscard = { discarded = $0 }
+        c.handle(.begin)
+        c.handle(.finalize)
+        await settle()
+        XCTAssertNil(discarded, "the text exists nowhere else yet — deleting it would lose the words")
+    }
+
+    func testHistoryOffKeepsFailedDictationForRetry() async {
+        var t = FakeTranscription()
+        t.result = .failure(.timeout)
+        let c = makeCoordinator(transcription: t, keepHistory: false)
+        var discarded: UUID?
+        c.onSessionDiscard = { discarded = $0 }
+        c.handle(.begin)
+        c.handle(.finalize)
+        await settle()
+        XCTAssertEqual(c.state, .failed(.timeout))
+        XCTAssertNil(discarded)
+    }
+
+    func testHistoryOffDiscardsEvenALongCancel() async {
+        let c = makeCoordinator(keepHistory: false)
+        var discarded: UUID?
+        c.onSessionDiscard = { discarded = $0 }
+        c.handle(.begin)
+        capture.result = AudioCaptureResult(framesWritten: 16_000 * 60, durationSeconds: 60)
+        c.handle(.cancel)
+        await pump()
+        XCTAssertNotNil(discarded, "Esc means throw it away when nothing is being kept")
+    }
+
+    /// Live bypasses the batch service; without an explicit refine, turning
+    /// live on would quietly turn the polish rewrite off.
+    func testLiveResultGoesThroughThePolishPass() async {
+        var t = FakeTranscription()
+        t.result = .failure(.network("batch must not be needed"))
+        t.refineTo = "Polished."
+        let live = LiveFallbackTests.ScriptedLive(
+            outcome: TranscriptionResult(rawTranscript: "um polished", cleanedTranscript: "um polished", modelID: "live")
+        )
+        let c = makeCoordinator(transcription: t, live: live)
+        c.handle(.begin)
+        await pump()
+        try? await Task.sleep(nanoseconds: 50_000_000) // let live.begin() land
+        c.handle(.finalize)
+        await settle()
+        XCTAssertEqual(c.state, .done(.inserted))
+        XCTAssertEqual(inserter.insertedText, "Polished.")
     }
 
     // Storage policy: what History doesn't show, we don't store.

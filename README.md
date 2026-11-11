@@ -19,7 +19,8 @@ This is not an officially supported Google product.
 ## What it is
 
 Hold `fn`, say the thing, let go. A moment later your words are in the app you
-were already using — punctuated, filler words removed, cleaned up. No window to switch
+were already using — punctuated, filler words removed, and (with Polish, on by
+default) rewritten from a ramble into clear, well-organized text. No window to switch
 to, no transcript to copy, no account to make.
 
 <img width="640" height="294" alt="Jot preview" src="https://github.com/user-attachments/assets/669efea9-dbfe-4174-a8fe-748aab818f14" />
@@ -34,7 +35,7 @@ while you talk, and a History window that proves nothing was ever lost.
 | --- | --- |
 | **Hold `fn`** | Records while held. Release and the text lands at your cursor. |
 | **`fn` + tap `Space`** | Hands-free: keeps recording after you let go. Tap `fn` to finish. |
-| **`Esc`** | Cancels. Anything over 10 seconds is still kept in History. |
+| **`Esc`** | Cancels and deletes the recording. With history kept, anything over 10 seconds stays in History. |
 
 The key is rebindable in Settings → General if `fn` is spoken for.
 
@@ -62,14 +63,35 @@ email vs. chat vs. code is available too, in Settings → Dictation.
 
 ## Install
 
-1. Download the latest `Jot-x.y.z.dmg` from [Releases](../../releases/latest).
-2. Drag Jot into **Applications** and launch it from there — apps run from a
-   mounted disk image are sandboxed by macOS and the permissions you grant will
-   not stick.
+This fork adds the **polish rewrite** and **no history by default**, and it has no
+prebuilt download — the upstream `Jot-x.y.z.dmg` does not include these changes.
+Build it from source (no paid Apple developer account needed):
 
-<div align="center">
-<img src="docs/images/installer.png" width="480" alt="Drag Jot to Applications">
-</div>
+1. **Install Xcode.** On macOS 26, from the App Store. On macOS 15, the App Store
+   version will not run — download **Xcode 26.3** (the last one for macOS 15.6+)
+   from [developer.apple.com/download/all](https://developer.apple.com/download/all/)
+   with a free Apple Account, unpack the `.xip` and drag `Xcode.app` into
+   Applications. Then, in Terminal:
+
+   ```bash
+   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+   sudo xcodebuild -license accept && xcodebuild -runFirstLaunch
+   ```
+
+2. **Build and install:**
+
+   ```bash
+   brew install xcodegen
+   ./scripts/build.sh -derivedDataPath build
+   ditto build/Build/Products/Debug/Jot.app /Applications/Jot.app
+   open /Applications/Jot.app
+   ```
+
+   Launch it from **Applications** — macOS does not keep the permissions you
+   grant to an app run from anywhere else.
+
+After a rebuild, macOS treats the new build as a different app: re-enable Jot in
+System Settings → Privacy & Security → Accessibility.
 
 Setup takes about two minutes and the app walks you through it:
 
@@ -88,17 +110,21 @@ account.
 
 **Model:** Jot runs on Gemini's specialist transcription model,
 `gemini-3.5-transcribe`. Your key needs access to it; setup tells you up front if
-it does not, instead of failing on your first dictation.
+it does not, instead of failing on your first dictation. The polish rewrite is a
+second, text-only call to `gemini-3.5-flash-lite` (the transcription model
+ignores prompts, so the rewriting instructions live there). It adds a few
+seconds — on a free-tier key we measured 2–6s for a 30-second ramble — and can
+be switched off in Settings → Dictation.
 
 ## How it works
 
 ```
 fn down ─▶ capture (CAF on disk from t=0) ─▶ fn up ─▶ FLAC ─▶ Gemini transcribe
                                                                     │
-   cursor ◀─ insert (AX → paste → clipboard) ◀─ [validate ◀─ tone pass] ─┘
-                                              (optional, off by default)
+   cursor ◀─ insert (AX → paste → clipboard) ◀─ [validate ◀ polish]─┘
+                                       (text only; polish on by default)
                                                     │
-                                              History (SQLite)
+                                    History (SQLite) — only if you turn it on
 ```
 
 A few decisions worth knowing about, because they are what make it feel solid:
@@ -112,7 +138,7 @@ A few decisions worth knowing about, because they are what make it feel solid:
 - **Insertion is a ladder**: Accessibility API first (no clipboard involved), then
   a guarded paste that restores your clipboard, then a "copied — press ⌘V" chip.
   It never blind-pastes into an app that stole focus mid-flight.
-- **A validation gate** guards the optional tone pass, catching the classic failure where the model *answers*
+- **A validation gate** guards the polish/tone pass, catching the classic failure where the model *answers*
   your audio instead of transcribing it, and falls back to the raw transcript.
 - **The paths that can lose words are tested.** `JotCore` is a headless Swift
   package holding the state machine, hotkey grammar, audio, transcription,

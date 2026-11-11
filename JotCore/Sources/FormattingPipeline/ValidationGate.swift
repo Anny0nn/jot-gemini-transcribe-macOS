@@ -47,6 +47,13 @@ public enum ValidationGate {
             s = s.replacingOccurrences(of: "```", with: "")
             s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        // The polish prompt delimits the transcript with <transcript> tags; a
+        // model that echoes them back has not failed, it has just been literal.
+        if s.hasPrefix("<transcript>") || s.hasSuffix("</transcript>") {
+            s = s.replacingOccurrences(of: "<transcript>", with: "")
+                .replacingOccurrences(of: "</transcript>", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         for label in ["CLEAN:", "Clean:", "Transcript:", "TRANSCRIPT:"] where s.hasPrefix(label) {
             s = String(s.dropFirst(label.count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }

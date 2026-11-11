@@ -119,24 +119,63 @@ public struct SettingsStore: Sendable {
     /// want reachable if smart mode ever regresses server-side.
     public struct FormattingPolicy: Equatable, Sendable {
         public var nativeSmart: Bool
+        /// Per-app tone matching (the conservative PromptV1 cleanup).
         public var cleanupPass: Bool
+        /// The polish rewrite (PolishPrompt). Wins over the tone-only prompt when
+        /// both are on; tone then rides along inside the polish prompt.
+        public var polish: Bool
 
-        public init(nativeSmart: Bool, cleanupPass: Bool) {
+        public init(nativeSmart: Bool, cleanupPass: Bool, polish: Bool = false) {
             self.nativeSmart = nativeSmart
             self.cleanupPass = cleanupPass
+            self.polish = polish
         }
 
         public var mode: GeminiClient.TranscriptionMode { nativeSmart ? .smart : .verbatim }
+        /// True when a second, text-only model call rewrites the transcript.
+        public var runsSecondPass: Bool { cleanupPass || polish }
         /// The gate only has a real reference to compare against when a second
         /// model actually rewrote the text.
-        public var runsValidationGate: Bool { cleanupPass }
+        public var runsValidationGate: Bool { runsSecondPass }
     }
 
     public var formattingPolicy: FormattingPolicy {
         FormattingPolicy(
             nativeSmart: Self.defaults.object(forKey: "smartTranscription") as? Bool ?? true,
-            cleanupPass: Self.defaults.object(forKey: "smartCleanupPass") as? Bool ?? false
+            cleanupPass: Self.defaults.object(forKey: "smartCleanupPass") as? Bool ?? false,
+            polish: polishRewriteEnabled
         )
+    }
+
+    /// Rewrite the transcript into finished writing (Rambler-style): fillers and
+    /// false starts gone, sentences and paragraphs reorganized for clarity.
+    ///
+    /// ON by default in this fork — it is the point of the fork. It costs one
+    /// text-only round trip after transcription and sends the transcript text
+    /// (never audio, never anything from the screen) to the formatting model.
+    public var polishRewriteEnabled: Bool {
+        Self.defaults.object(forKey: "polishRewrite") as? Bool ?? true
+    }
+
+    public func setPolishRewrite(_ enabled: Bool) {
+        Self.set(enabled, forKey: "polishRewrite")
+    }
+
+    /// Keep dictations (audio + transcript) in History after they are delivered.
+    ///
+    /// OFF by default: a dictation's recording and text are deleted from disk the
+    /// moment the text reaches your cursor or clipboard. The recording still goes
+    /// to disk WHILE you speak — that is what makes a crash or a dropped
+    /// connection cost nothing — but it does not outlive the dictation. Only
+    /// dictations that have not been delivered yet (offline, failed, blocked by a
+    /// password field) stay, so they can be retried; they go once handled or
+    /// deleted.
+    public var keepHistory: Bool {
+        Self.defaults.object(forKey: "keepHistory") as? Bool ?? false
+    }
+
+    public func setKeepHistory(_ enabled: Bool) {
+        Self.set(enabled, forKey: "keepHistory")
     }
 
     /// Native `mode: "smart"` — the default transcription path.

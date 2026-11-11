@@ -19,6 +19,18 @@ import Foundation
 public protocol TranscriptionServicing: Sendable {
     /// Returns (rawTranscript, cleanedTranscript). Throws TranscriptionError.
     func transcribe(audioURL: URL, durationSeconds: Double, context: DictationContext) async throws -> TranscriptionResult
+
+    /// The text-only second pass (polish / tone) over a transcript that was
+    /// produced elsewhere — the live stream. The batch path runs it inside
+    /// `transcribe`. Never throws: a failed pass returns `result` unchanged.
+    func refine(_ result: TranscriptionResult, context: DictationContext) async -> TranscriptionResult
+}
+
+public extension TranscriptionServicing {
+    /// Default: no second pass (stubs and test fakes).
+    func refine(_ result: TranscriptionResult, context: DictationContext) async -> TranscriptionResult {
+        result
+    }
 }
 
 public struct TranscriptionResult: Equatable, Sendable {
