@@ -40,6 +40,10 @@ public struct InsertionCoordinator: TextInserting {
             return .blockedSecureField
         }
 
+        if SettingsStore().pasteIntoCurrentFocus {
+            return await insertAtCurrentFocus(text)
+        }
+
         // Guard 1: is the user still where they started dictating?
         let frontmost = NSWorkspace.shared.frontmostApplication
         if let expectedPID = context.targetPID, let frontmost, frontmost.processIdentifier != expectedPID {
@@ -81,6 +85,30 @@ public struct InsertionCoordinator: TextInserting {
         }
 
         // Tier 3: clipboard floor.
+        paster.copyOnly(text)
+        return .fellBackToClipboard
+    }
+
+    /// "Paste wherever I am": the same ladder with the where-did-you-start guards
+    /// removed. The target is whatever holds keyboard focus NOW — judged by the
+    /// focused element's owner, not by the "frontmost" app, which is wrong for
+    /// floating windows (iTerm's hotkey window types into iTerm while macOS still
+    /// reports the app underneath as frontmost).
+    @MainActor
+    private func insertAtCurrentFocus(_ text: String) async -> InsertionOutcome {
+        let focusedPID = AXInserter.focusedProcessID()
+            ?? NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // Per-app quirks (terminals → straight to paste) follow the focused app.
+        let bundleID = focusedPID.flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+        if case .landed = await AXInserter.insert(text, targetPID: nil, bundleID: bundleID) {
+            Log.insertion.info("inserted via AX at current focus")
+            return .inserted
+        }
+        // ⌘V goes to whatever has keyboard focus — which is the point here.
+        if await paster.paste(text) {
+            Log.insertion.info("⌘V posted at current focus (\(bundleID ?? "unknown app", privacy: .public))")
+            return .inserted
+        }
         paster.copyOnly(text)
         return .fellBackToClipboard
     }

@@ -166,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "legacyTranscribeEndpoint": settings.setLegacyTranscribeEndpoint(value)
         case "polishRewrite": settings.setPolishRewrite(value)
         case "keepHistory": settings.setKeepHistory(value)
+        case "pasteIntoCurrentFocus": settings.setPasteIntoCurrentFocus(value)
         default: Log.session.warning("debug set: unknown key \(key, privacy: .public)")
         }
     }

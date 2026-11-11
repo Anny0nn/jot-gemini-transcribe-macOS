@@ -82,16 +82,21 @@ Build it from source (no paid Apple developer account needed):
 
    ```bash
    brew install xcodegen
-   ./scripts/build.sh -derivedDataPath build
-   ditto build/Build/Products/Debug/Jot.app /Applications/Jot.app
-   open /Applications/Jot.app
+   ./scripts/make-local-signing-cert.sh   # once — see below
+   ./scripts/install-local.sh             # build, sign, install, launch
    ```
 
-   Launch it from **Applications** — macOS does not keep the permissions you
-   grant to an app run from anywhere else.
+   Re-run `./scripts/install-local.sh` after every update; it quits the running
+   copy and replaces it in **Applications**.
 
-After a rebuild, macOS treats the new build as a different app: re-enable Jot in
-System Settings → Privacy & Security → Accessibility.
+**Why the certificate:** macOS remembers Accessibility, Microphone and the
+API-key Keychain grant by the app's signature. A plain debug build is signed
+ad-hoc — a fingerprint of that exact build — so every rebuild looks like a new
+app and asks for everything again. `make-local-signing-cert.sh` creates a
+self-signed code-signing certificate in your login keychain (no Apple account;
+trusted for code signing only, on this Mac only), and `install-local.sh` signs
+with it, so permissions survive rebuilds. The first install signed this way asks
+one last time.
 
 Setup takes about two minutes and the app walks you through it:
 

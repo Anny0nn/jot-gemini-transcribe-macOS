@@ -78,7 +78,7 @@ final class PolishPromptTests: XCTestCase {
 }
 
 final class PolishSettingsTests: XCTestCase {
-    private let keys = ["polishRewrite", "keepHistory", "smartCleanupPass"]
+    private let keys = ["polishRewrite", "keepHistory", "smartCleanupPass", "pasteIntoCurrentFocus"]
     private var saved: [String: Any] = [:]
 
     override func setUp() {
@@ -100,6 +100,7 @@ final class PolishSettingsTests: XCTestCase {
         XCTAssertTrue(settings.polishRewriteEnabled, "polish is the point of this fork")
         XCTAssertFalse(settings.keepHistory, "nothing is retained unless explicitly enabled")
         XCTAssertTrue(settings.formattingPolicy.runsSecondPass)
+        XCTAssertTrue(settings.pasteIntoCurrentFocus, "the text lands wherever focus is")
     }
 
     func testPolishOffAndToneOffMeansOneCall() {

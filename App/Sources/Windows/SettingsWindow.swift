@@ -231,6 +231,7 @@ struct GeneralPane: View {
 
     @State private var hotkey = SettingsStore().hotkeyKey
     @State private var doubleTapLock = SettingsStore().doubleTapLockEnabled
+    @State private var pasteAtFocus = SettingsStore().pasteIntoCurrentFocus
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var globeAction = FnUsageAdvisor.currentGlobeKeyAction()
 
@@ -279,6 +280,18 @@ struct GeneralPane: View {
             }
 
             Section {
+                Toggle("Paste wherever I am when the text is ready", isOn: $pasteAtFocus)
+                    .onChange(of: pasteAtFocus) { _, enabled in
+                        guard enabled != settings.pasteIntoCurrentFocus else { return }
+                        settings.setPasteIntoCurrentFocus(enabled)
+                    }
+            } footer: {
+                Text(pasteAtFocus
+                     ? "The text goes to whatever has keyboard focus when it's ready — including floating windows like iTerm's hotkey window — even if you switched apps while it was processing. Password fields are still refused."
+                     : "If focus moved while the text was processing, it's copied instead of pasted (press ⌘V), so it never lands somewhere you didn't intend.")
+            }
+
+            Section {
                 Toggle("Start Jot at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
                         // The failure-path revert below re-enters onChange with the
@@ -320,6 +333,7 @@ struct GeneralPane: View {
             switch note.object as? String {
             case "hotkeyKey": hotkey = settings.hotkeyKey
             case "doubleTapLock": doubleTapLock = settings.doubleTapLockEnabled
+            case "pasteIntoCurrentFocus": pasteAtFocus = settings.pasteIntoCurrentFocus
             default: break
             }
         }

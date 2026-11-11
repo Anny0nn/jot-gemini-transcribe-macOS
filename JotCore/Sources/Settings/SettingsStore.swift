@@ -161,6 +161,21 @@ public struct SettingsStore: Sendable {
         Self.set(enabled, forKey: "polishRewrite")
     }
 
+    /// Put the text wherever keyboard focus is when it's ready, even if that is
+    /// not where dictation started (you switched apps, or a floating window —
+    /// iTerm's hotkey window, a launcher — holds focus while another app is
+    /// "frontmost"). ON by default in this fork: the text always lands.
+    /// Off restores upstream's guard: a focus change means "copied — press ⌘V"
+    /// instead of a paste, so text can never land somewhere you didn't intend.
+    /// Password fields are refused either way.
+    public var pasteIntoCurrentFocus: Bool {
+        Self.defaults.object(forKey: "pasteIntoCurrentFocus") as? Bool ?? true
+    }
+
+    public func setPasteIntoCurrentFocus(_ enabled: Bool) {
+        Self.set(enabled, forKey: "pasteIntoCurrentFocus")
+    }
+
     /// Keep dictations (audio + transcript) in History after they are delivered.
     ///
     /// OFF by default: a dictation's recording and text are deleted from disk the

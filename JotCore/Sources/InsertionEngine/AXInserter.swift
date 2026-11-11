@@ -59,7 +59,14 @@ public enum AXInserter {
         if let targetPID {
             var elementPID: pid_t = 0
             if AXUIElementGetPid(element, &elementPID) == .success, elementPID != targetPID {
-                Log.insertion.info("AXInserter: focused element belongs to a different app — chip, never blind paste")
+                // Name BOTH sides. "A different app" alone made a false positive
+                // that fired on every dictation in one terminal undiagnosable:
+                // the only way to tell real focus theft (Spotlight, a launcher)
+                // from a helper process of the target app is to see who it is.
+                // Process identity only — never the element's contents.
+                var roleRef: CFTypeRef?
+                AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
+                Log.insertion.info("AXInserter: focused element belongs to a different process — chip, never blind paste. target=\(Self.describe(targetPID), privacy: .public) focused=\(Self.describe(elementPID), privacy: .public) role=\((roleRef as? String) ?? "?", privacy: .public)")
                 return .focusElsewhere
             }
         }
@@ -101,6 +108,34 @@ public enum AXInserter {
             Log.insertion.info("AXInserter: set reported success but value unchanged after re-check — falling to paste")
         }
         return landed ? .landed : .notPossible
+    }
+
+    /// The process that owns the system-wide focused UI element — where typing
+    /// would go right now. Nil when Accessibility can't say (no trust, nothing
+    /// focused, an unresponsive app).
+    static func focusedProcessID() -> pid_t? {
+        let system = AXUIElementCreateSystemWide()
+        AXUIElementSetMessagingTimeout(system, 0.5)
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef, CFGetTypeID(focused) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(unsafeDowncast(focused as AnyObject, to: AXUIElement.self), &pid) == .success else {
+            return nil
+        }
+        return pid
+    }
+
+    /// "pid bundleID (executable path)" for a process — enough to tell a helper
+    /// of the target app from another app entirely.
+    static func describe(_ pid: pid_t) -> String {
+        let app = NSRunningApplication(processIdentifier: pid)
+        var pathBuffer = [CChar](repeating: 0, count: 4096)
+        let path = proc_pidpath(pid, &pathBuffer, UInt32(pathBuffer.count)) > 0
+            ? String(cString: pathBuffer) : (app?.executableURL?.path ?? "?")
+        return "\(pid) \(app?.bundleIdentifier ?? "no-bundle-id") (\(path))"
     }
 
     private static func stringValue(of element: AXUIElement) -> String? {
