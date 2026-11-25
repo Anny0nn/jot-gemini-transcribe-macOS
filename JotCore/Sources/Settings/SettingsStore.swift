@@ -236,6 +236,24 @@ public struct SettingsStore: Sendable {
         Self.set(enabled, forKey: "legacyTranscribeEndpoint")
     }
 
+    /// Optional second dictation key, for moving between keyboards that don't
+    /// share one. Nil when unset or the same as the main key.
+    public var secondHotkeyKey: HotkeyKey? {
+        let key = Self.defaults.string(forKey: "secondHotkeyKey").flatMap(HotkeyKey.init(rawValue:))
+        return key == hotkeyKey ? nil : key
+    }
+
+    public func setSecondHotkeyKey(_ key: HotkeyKey?) {
+        Self.set(key?.rawValue, forKey: "secondHotkeyKey")
+    }
+
+    public var hotkeyKeys: [HotkeyKey] { [hotkeyKey] + (secondHotkeyKey.map { [$0] } ?? []) }
+
+    /// "Right ⌃ or Right ⌥" — for copy that tells the user what to hold.
+    public var hotkeyDisplayName: String {
+        hotkeyKeys.map(\.displayName).joined(separator: " or ")
+    }
+
     public func setHotkeyKey(_ key: HotkeyKey) {
         Self.set(key.rawValue, forKey: "hotkeyKey")
     }

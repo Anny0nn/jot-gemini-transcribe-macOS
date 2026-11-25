@@ -230,6 +230,7 @@ struct GeneralPane: View {
     private let settings = SettingsStore()
 
     @State private var hotkey = SettingsStore().hotkeyKey
+    @State private var secondHotkey = SettingsStore().secondHotkeyKey
     @State private var doubleTapLock = SettingsStore().doubleTapLockEnabled
     @State private var pasteAtFocus = SettingsStore().pasteIntoCurrentFocus
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -251,7 +252,7 @@ struct GeneralPane: View {
             // macOS handles the fn/🌐 press itself, below the level any app can
             // intercept, so holding fn to dictate would ALSO fire this action.
             // The only fix is the system setting — say so where the key is chosen.
-            if hotkey == .fn, globeAction.conflictsWithFnHotkey {
+            if hotkey == .fn || secondHotkey == .fn, globeAction.conflictsWithFnHotkey {
                 Section {
                     Text("macOS also \(globeActionName) when you press fn, which will fight with holding it to dictate. Set Keyboard → “Press 🌐 key to” → “Do Nothing”. If macOS Dictation’s shortcut uses 🌐/fn, change that too.")
                     Button("Open Keyboard Settings…") {
@@ -270,6 +271,21 @@ struct GeneralPane: View {
                 }
                 .onChange(of: hotkey) { _, newKey in
                     settings.setHotkeyKey(newKey)
+                    // Picking the second key as the main one leaves no second.
+                    if secondHotkey == newKey {
+                        settings.setSecondHotkeyKey(nil)
+                        secondHotkey = nil
+                    }
+                }
+                Picker("Second dictation key", selection: $secondHotkey) {
+                    Text("None").tag(HotkeyKey?.none)
+                    ForEach(HotkeyKey.allCases.filter { $0 != hotkey }, id: \.self) { key in
+                        Text(key.displayName).tag(HotkeyKey?.some(key))
+                    }
+                }
+                .onChange(of: secondHotkey) { _, newKey in
+                    guard newKey != settings.secondHotkeyKey else { return }
+                    settings.setSecondHotkeyKey(newKey)
                 }
                 Toggle("Double-tap to lock hands-free", isOn: $doubleTapLock)
                     .onChange(of: doubleTapLock) { _, enabled in
@@ -320,6 +336,7 @@ struct GeneralPane: View {
         .onAppear {
             launchAtLogin = SMAppService.mainApp.status == .enabled
             hotkey = settings.hotkeyKey
+            secondHotkey = settings.secondHotkeyKey
             doubleTapLock = settings.doubleTapLockEnabled
             globeAction = FnUsageAdvisor.currentGlobeKeyAction()
         }
@@ -332,6 +349,7 @@ struct GeneralPane: View {
         .onReceive(NotificationCenter.default.publisher(for: .gtSettingDidChange).receive(on: RunLoop.main)) { note in
             switch note.object as? String {
             case "hotkeyKey": hotkey = settings.hotkeyKey
+            case "secondHotkeyKey": secondHotkey = settings.secondHotkeyKey
             case "doubleTapLock": doubleTapLock = settings.doubleTapLockEnabled
             case "pasteIntoCurrentFocus": pasteAtFocus = settings.pasteIntoCurrentFocus
             default: break

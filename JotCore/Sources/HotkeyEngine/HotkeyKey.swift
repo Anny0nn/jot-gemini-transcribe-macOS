@@ -59,3 +59,35 @@ public enum HotkeyKey: String, CaseIterable, Codable, Sendable {
         }
     }
 }
+
+/// Turns flagsChanged events for one or more dictation keys into a single
+/// press/release. Whichever key goes down first owns the press until IT comes
+/// up; another dictation key pressed meanwhile neither restarts nor ends it.
+struct HotkeyEdgeDetector {
+    private(set) var keys: [HotkeyKey]
+    private var heldKey: HotkeyKey?
+
+    init(keys: [HotkeyKey]) { self.keys = keys }
+
+    /// Keeps a press in progress if its key is still configured — dropping it
+    /// would swallow the coming key-up and strand the session.
+    mutating func setKeys(_ newKeys: [HotkeyKey]) {
+        keys = newKeys
+        if let heldKey, !newKeys.contains(heldKey) { self.heldKey = nil }
+    }
+
+    /// true = pressed, false = released, nil = not ours (pass the event through).
+    mutating func edge(keyCode: Int64, flags: CGEventFlags) -> Bool? {
+        guard let key = keys.first(where: { $0.keyCode == keyCode }) else { return nil }
+        let isDown = key.isDown(in: flags)
+        if heldKey == nil, isDown {
+            heldKey = key
+            return true
+        }
+        if heldKey == key, !isDown {
+            heldKey = nil
+            return false
+        }
+        return nil
+    }
+}

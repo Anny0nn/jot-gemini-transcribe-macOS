@@ -42,10 +42,9 @@ public final class EventTapEngine {
     /// Called when the tap had to be revived (telemetry for the #1 field failure).
     public var onTapRevived: (() -> Void)?
 
-    private var key: HotkeyKey
+    private var edges: HotkeyEdgeDetector
     private let lock = NSLock()
     private var processor = HotkeyProcessor()
-    private var keyIsDown = false
     /// Set by the app while a session is in flight beyond the grammar's view
     /// (transcribing/inserting, or UI-started hands-free) so Esc still cancels
     /// (audit L8/L13 — the machine supported cancel, the tap never delivered it).
@@ -58,24 +57,17 @@ public final class EventTapEngine {
     private var doubleTapTimer: DispatchSourceTimer?
     private var healthTimer: DispatchSourceTimer?
 
-    public init(key: HotkeyKey = .fn) {
-        self.key = key
+    public init(keys: [HotkeyKey] = [.fn]) {
+        edges = HotkeyEdgeDetector(keys: keys)
     }
 
     deinit {
         stop()
     }
 
-    public func setKey(_ newKey: HotkeyKey) {
+    public func setKeys(_ newKeys: [HotkeyKey]) {
         lock.lock()
-        // Same key ⇒ keep keyIsDown: resetting the edge detector while the user
-        // is physically holding the key would swallow the coming key-up and
-        // strand the session (reachable via any settings write re-applying
-        // hotkey config mid-hold).
-        if key != newKey {
-            key = newKey
-            keyIsDown = false
-        }
+        edges.setKeys(newKeys)
         lock.unlock()
     }
 
@@ -168,7 +160,7 @@ public final class EventTapEngine {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         state = .running
-        Log.hotkey.info("EventTapEngine: tap running (key=\(self.key.rawValue, privacy: .public))")
+        Log.hotkey.info("EventTapEngine: tap running (keys=\(self.edges.keys.map(\.rawValue).joined(separator: ","), privacy: .public))")
         CFRunLoopRun()
         Log.hotkey.info("EventTapEngine: run loop exited")
     }
@@ -192,17 +184,10 @@ public final class EventTapEngine {
         switch type {
         case .flagsChanged:
             lock.lock()
-            let configured = key
-            guard keyCode == configured.keyCode else {
+            guard let isDown = edges.edge(keyCode: keyCode, flags: event.flags) else {
                 lock.unlock()
                 return Unmanaged.passUnretained(event)
             }
-            let isDown = configured.isDown(in: event.flags)
-            guard isDown != keyIsDown else {
-                lock.unlock()
-                return Unmanaged.passUnretained(event)
-            }
-            keyIsDown = isDown
             let fx = processor.handle(isDown ? .hotkeyDown : .hotkeyUp, at: now)
             lock.unlock()
             apply(fx)

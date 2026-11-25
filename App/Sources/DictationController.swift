@@ -25,7 +25,7 @@ final class DictationController {
     let coordinator: DictationCoordinator
     /// Idle-time capture-graph prewarming — the key press pays only start().
     private let warmEngines = WarmEnginePool()
-    private let engine = EventTapEngine(key: .fn)
+    private let engine = EventTapEngine()
     private let hud = PillHUDController()
     private let earcons = EarconPlayer()
     private let transcriptionService: GeminiTranscriptionService
@@ -234,7 +234,7 @@ final class DictationController {
                 onStatusChange?("Add your Gemini API key in Settings → Advanced")
                 onStatusItemState?(.attention)
             } else {
-                onStatusChange?("Ready — hold \(SettingsStore().hotkeyKey.displayName) to dictate")
+                onStatusChange?("Ready — hold \(SettingsStore().hotkeyDisplayName) to dictate")
                 // Clear a lingering attention icon (auth failure, missing key).
                 onStatusItemState?(.idle)
                 warmEngines.prewarmNext()
@@ -302,7 +302,7 @@ final class DictationController {
 
     func applyHotkeySettings() {
         let settings = SettingsStore()
-        engine.setKey(settings.hotkeyKey)
+        engine.setKeys(settings.hotkeyKeys)
         engine.setDoubleTapLockEnabled(settings.doubleTapLockEnabled)
     }
 
@@ -314,12 +314,12 @@ final class DictationController {
             if hud.model.state == .idleDot || hud.model.state == .hidden {
                 setPill(.idleDot)
             }
-        case "hotkeyKey", "doubleTapLock":
+        case "hotkeyKey", "secondHotkeyKey", "doubleTapLock":
             applyHotkeySettings()
             // The menu-bar status line names the key — keep it truthful, but
             // never overwrite an attention message ("Grant Accessibility…").
             if engineActive, KeychainStore.loadAPIKey() != nil {
-                onStatusChange?("Ready — hold \(SettingsStore().hotkeyKey.displayName) to dictate")
+                onStatusChange?("Ready — hold \(SettingsStore().hotkeyDisplayName) to dictate")
             }
         case "accessibility":
             // Granted mid-onboarding: wake the engine so the Try-It screen works.

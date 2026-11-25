@@ -848,7 +848,7 @@ private struct GlobeKeyScreen: View {
 /// with the user's ACTUAL configured key, before the hands-on Try It.
 private struct HowToScreen: View {
     let onNext: () -> Void
-    private let keyName = SettingsStore().hotkeyKey.displayName
+    private let keyName = SettingsStore().hotkeyDisplayName
 
     var body: some View {
         ScreenScaffold("Talk to Jot.", "Three gestures — that's the whole product.") {
@@ -913,7 +913,7 @@ private struct TryItScreen: View {
     @State private var revealClean: String?
     @State private var fetchTask: Task<Void, Never>?
 
-    private let keyName = SettingsStore().hotkeyKey.displayName
+    private let keyName = SettingsStore().hotkeyDisplayName
     private var hasWords: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -1074,7 +1074,7 @@ private struct DoneScreen: View {
     @State private var launchAtLogin = true
 
     var body: some View {
-        ScreenScaffold("You're set.", "Jot lives in your menu bar now. Hold \(SettingsStore().hotkeyKey.displayName) anywhere and start talking.") {
+        ScreenScaffold("You're set.", "Jot lives in your menu bar now. Hold \(SettingsStore().hotkeyDisplayName) anywhere and start talking.") {
             VStack(spacing: JotUI.Spacing.m) {
                 // Same voice as the scaffold's subtitle — two type sizes on the
                 // page total (display + body), never three.
